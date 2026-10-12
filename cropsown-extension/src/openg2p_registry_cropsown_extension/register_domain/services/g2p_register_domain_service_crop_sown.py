@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openg2p_registry_core.models import G2PRegisterChangeRequest
 from openg2p_registry_core.services import G2PRegisterDomainService
 
-from .domain_validation_utils import as_float, as_int, validation_error
+from .domain_validation_utils import as_float, as_int, is_blank, validation_error
+from .farmer_registry_enrichment import compose_farmer_name, fetch_farmer_record, to_farmer_fields
 
 _logger = logging.getLogger("g2p-register-domain-service")
 
@@ -32,6 +33,9 @@ _SECTION_LIFECYCLE_STAGE_MAP = {
 class G2PRegisterDomainServiceCropSown(G2PRegisterDomainService):
     async def validate_domain_attributes(self, records: list[dict], session=None, **kwargs):
         for record in records:
+            # On submit, the Farmer Registry's copy of this farmer replaces the
+            # typed identity (matched on BOTH Farmer ID + Fayda). Fails open.
+            await self._enrich_from_farmer_registry(record)
 
             from .domain_validation_utils import validate_alphabetical_name, validate_mobile_number
             validate_alphabetical_name(record.get("farmer_name"), "Farmer Name")
@@ -41,6 +45,28 @@ class G2PRegisterDomainServiceCropSown(G2PRegisterDomainService):
 
             if session:
                 await self._validate_fayda_season_and_year(record, session)
+
+    async def _enrich_from_farmer_registry(self, record: dict) -> None:
+        """Replace the typed farmer identity with the Farmer Registry's record,
+        matched on BOTH Farmer ID and Fayda FAN ID (both-required) via a signed,
+        consent-carrying DCI search. The registry's data wins over the operator's.
+        Fails open: leaves the record as typed when enrichment is off/misconfigured,
+        both ids are blank, or there is no single match (see
+        farmer_registry_enrichment.fetch_farmer_record)."""
+        farmer_id = record.get("farmer_id")
+        fayda = record.get("fayda_fan_id") or record.get("fayda_id")
+        if is_blank(farmer_id) and is_blank(fayda):
+            return
+        personal = await fetch_farmer_record(farmer_id, fayda)
+        if not personal:
+            return
+        fields = to_farmer_fields(personal)
+        name = compose_farmer_name(fields.get("first_name"), fields.get("middle_name"), fields.get("last_name"))
+        if name:
+            record["farmer_name"] = name
+        if not is_blank(fields.get("fayda_fan_id")) and is_blank(record.get("fayda_fan_id")):
+            record["fayda_fan_id"] = fields["fayda_fan_id"]
+        _logger.info("Enriched crop_sown farmer %s from Farmer Registry: name=%s", farmer_id, name)
 
     async def _validate_fayda_season_and_year(self, record: dict, session) -> None:
         fayda_fan_id = record.get("fayda_fan_id") or record.get("fayda_id")
@@ -97,9 +123,10 @@ class G2PRegisterDomainServiceCropSown(G2PRegisterDomainService):
         value = record.get("fayda_fan_id")
         if value is None or str(value).strip() == "":
             return
-        fyda_pattern = r'^FAN-\d{16}$'
+        # Fayda FAN / UIN as held by the Farmer Registry's foundational_id: numeric digits.
+        fyda_pattern = r'^\d{6,20}$'
         if not re.match(fyda_pattern, str(value).strip()):
-            validation_error("Fayda ID must be in this format: FAN-1234567890123456")
+            validation_error("Fayda ID (UIN) must be numeric digits, e.g. 4733616459")
 
     def _validate_mobile_number(self, record: dict, field: str) -> None:
         value = record.get(field)

@@ -83,7 +83,7 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    image: chainguard/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -100,36 +100,26 @@ services:
           # name, so it has to resolve identically inside and outside.
           - ${MINIO_HOST}
     healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
+      # chainguard/minio has bash (with working /dev/tcp) but no curl; probe the API port.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/localhost/9000']
       interval: 5s
       timeout: 5s
       retries: 30
 
   minio-init:
-    image: minio/mc:latest
+    image: chainguard/minio-client:latest
     # The MinIO chart creates no buckets; the platform's DocumentBucket enum
     # requires these three to exist, with the physical name equal to the enum
-    # value.
+    # value. chainguard's mc client is distroless (no shell), so the alias is
+    # configured via MC_HOST_local and all buckets are made in one `mc mb` call.
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint:
-      - sh
-      - -c
-      - |
-        set -e
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        for b in "$$DEFAULT_BUCKET" "$$TEMPLATE_BUCKET" "$$DOCUMENTS_BUCKET"; do
-          mc mb --ignore-existing "local/$$b"
-        done
-        echo "buckets ready"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      DEFAULT_BUCKET: ${DEFAULT_BUCKET}
-      TEMPLATE_BUCKET: ${TEMPLATE_BUCKET}
-      DOCUMENTS_BUCKET: ${DOCUMENTS_BUCKET}
-    restart: 'no'
+      MC_HOST_local: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    entrypoint: ['/usr/bin/mc']
+    command: ['mb', '--ignore-existing', 'local/${DEFAULT_BUCKET}', 'local/${TEMPLATE_BUCKET}', 'local/${DOCUMENTS_BUCKET}']
+    restart: 'on-failure'
 
   keycloak:
     # Upstream image rather than openg2p/keycloak: it is multi-arch (so it runs
@@ -599,32 +589,21 @@ services:
     # object by bare filename in the documents bucket, so the files are copied in
     # flat, under exactly those names — otherwise the profile widget on the crop
     # sown record resolves record_image_document_id to a missing object.
-    image: minio/mc:latest
+    image: chainguard/minio-client:latest
     depends_on:
       minio-init:
         condition: service_completed_successfully
+    # chainguard mc client is distroless (no shell), so the alias comes from
+    # MC_HOST_local and the flat upload is a single recursive `mc cp`. The
+    # original per-file loop + LOAD_CROPSOWN_SAMPLE_DATA guard are dropped;
+    # LOAD_CROPSOWN_SAMPLE_DATA=true in local/.env so the copy always runs here.
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      DOCUMENTS_BUCKET: ${DOCUMENTS_BUCKET}
-      LOAD_CROPSOWN_SAMPLE_DATA: ${LOAD_CROPSOWN_SAMPLE_DATA}
+      MC_HOST_local: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
     volumes:
       - ./docker/db-seed/sample-data/images:/images:ro
-    entrypoint:
-      - sh
-      - -c
-      - |
-        set -e
-        if [ "$$LOAD_CROPSOWN_SAMPLE_DATA" != "true" ]; then
-          echo "LOAD_CROPSOWN_SAMPLE_DATA is not true - skipping demo record photos."
-          exit 0
-        fi
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        for f in /images/*; do
-          mc cp "$$f" "local/$$DOCUMENTS_BUCKET/$$(basename "$$f")"
-        done
-        echo "demo record photos uploaded"
-    restart: 'no'
+    entrypoint: ['/usr/bin/mc']
+    command: ['cp', '--recursive', '/images/', 'local/${DOCUMENTS_BUCKET}/']
+    restart: 'on-failure'
 
   iam-register:
     image: curlimages/curl:8.11.1

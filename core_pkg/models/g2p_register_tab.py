@@ -15,6 +15,11 @@ class G2PRegisterUITab(BaseORMModel):
     tab_label: Mapped[str] = mapped_column(String, nullable=False)
     tab_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    used_for_new_intake_form: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    no_of_verifications_required: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    intake_form_name: Mapped[str] = mapped_column(String, nullable=True)
+    intake_form_description: Mapped[str] = mapped_column(String, nullable=True)
+    intake_form_auto_approve: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     @validates("tab_label")
     def validate_tab_label(self, _key: str, tab_label_value: str) -> str:

@@ -1,3 +1,4 @@
+from .farmer import G2PRegisterFarmer, G2PRegisterHistoryFarmer, G2PIntakeFormFarmer
 from .crop_sown import G2PRegisterCropSown, G2PRegisterHistoryCropSown, G2PIntakeFormCropSown
 from .planning import G2PRegisterPlanning, G2PRegisterHistoryPlanning, G2PIntakeFormPlanning
 from .cultivation import G2PRegisterCultivation, G2PRegisterHistoryCultivation, G2PIntakeFormCultivation

@@ -1,3 +1,4 @@
+from .farmer import G2PRegisterSchemaFarmer, G2PRegisterHistorySchemaFarmer, G2PIntakeFormSchemaFarmer
 from .crop_sown import G2PRegisterSchemaCropSown, G2PRegisterHistorySchemaCropSown, G2PIntakeFormSchemaCropSown
 from .planning import G2PRegisterSchemaPlanning, G2PRegisterHistorySchemaPlanning, G2PIntakeFormSchemaPlanning
 from .cultivation import G2PRegisterSchemaCultivation, G2PRegisterHistorySchemaCultivation, G2PIntakeFormSchemaCultivation
